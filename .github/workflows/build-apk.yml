@@ -23,9 +23,6 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: ''
-          cmdline-tools-version: 15859902
 
       - name: Install Android packages
         shell: bash
@@ -35,14 +32,22 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
+          yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses || true
+
           sdkmanager --sdk_root="$ANDROID_HOME" --install \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
+            "cmdline-tools;latest" \
             "cmake;3.10.2.4988404" \
             "ndk;23.2.8568313"
 
-          echo "Android packages installed"
+          echo "Checking Android SDK..."
+
+          test -f "$ANDROID_HOME/platform-tools/adb"
+          test -f "$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          test -d "$ANDROID_HOME/platforms/android-34"
+          test -d "$ANDROID_HOME/ndk/23.2.8568313"
 
       - name: Download Godot
         run: |
@@ -51,21 +56,28 @@ jobs:
           chmod +x Godot_v4.3-stable_linux.x86_64
 
       - name: Install Android templates
+        shell: bash
         run: |
+          set -e
+
           wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
 
           mkdir -p templates
           unzip -q Godot_v4.3-stable_export_templates.tpz -d templates
 
-          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
+          mkdir -p "$TEMPLATE_DIR"
 
-          cp templates/templates/android_debug.apk \
-            ~/.local/share/godot/export_templates/4.3.stable/
+          DEBUG_TEMPLATE=$(find templates -name android_debug.apk -print -quit)
+          RELEASE_TEMPLATE=$(find templates -name android_release.apk -print -quit)
 
-          cp templates/templates/android_release.apk \
-            ~/.local/share/godot/export_templates/4.3.stable/
+          test -n "$DEBUG_TEMPLATE"
+          test -n "$RELEASE_TEMPLATE"
 
-          ls -lh ~/.local/share/godot/export_templates/4.3.stable/
+          cp "$DEBUG_TEMPLATE" "$TEMPLATE_DIR/android_debug.apk"
+          cp "$RELEASE_TEMPLATE" "$TEMPLATE_DIR/android_release.apk"
+
+          ls -lh "$TEMPLATE_DIR"
 
       - name: Extract game ZIP
         shell: bash
@@ -87,9 +99,10 @@ jobs:
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project found: $PROJECT_DIR"
+          echo "Project: $PROJECT_DIR"
 
       - name: Create debug key
+        shell: bash
         run: |
           mkdir -p ~/.android
 
@@ -139,6 +152,14 @@ jobs:
           package/signed=true
           package/retain_data_on_uninstall=false
           package/allow_backup=true
+
+          keystore/debug="/home/runner/.android/debug.keystore"
+          keystore/debug_user="androiddebugkey"
+          keystore/debug_password="android"
+
+          keystore/release=""
+          keystore/release_user=""
+          keystore/release_password=""
           EOF
 
       - name: Configure Godot Android SDK
@@ -154,14 +175,19 @@ jobs:
           export/android/java_sdk_path = "$JAVA_HOME"
           EOF
 
-          echo "SDK: $ANDROID_HOME"
-          echo "Java: $JAVA_HOME"
+          echo "Android SDK: $ANDROID_HOME"
+          echo "Java SDK: $JAVA_HOME"
+
+          test -x "$JAVA_HOME/bin/java"
+          test -d "$ANDROID_HOME"
 
       - name: Import project
+        shell: bash
         run: |
           ./Godot_v4.3-stable_linux.x86_64 \
             --headless \
             --editor \
+            --verbose \
             --path "$PROJECT_DIR" \
             --quit
 
@@ -176,6 +202,19 @@ jobs:
 
           mkdir -p "$PROJECT_DIR/build"
 
+          echo "Checking export configuration..."
+
+          echo "SDK:"
+          ls "$ANDROID_HOME"
+
+          echo "Java:"
+          "$JAVA_HOME/bin/java" -version
+
+          echo "Export templates:"
+          ls -lh ~/.local/share/godot/export_templates/4.3.stable/
+
+          echo "Starting Android export..."
+
           ./Godot_v4.3-stable_linux.x86_64 \
             --headless \
             --verbose \
@@ -185,7 +224,7 @@ jobs:
 
           test -s "$PROJECT_DIR/build/Frontline.apk"
 
-          echo "APK successfully created!"
+          echo "APK CREATED SUCCESSFULLY!"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
