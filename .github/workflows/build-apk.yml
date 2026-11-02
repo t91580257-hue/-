@@ -3,24 +3,97 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    paths:
-      - '*.zip'
+    branches: [main]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download project
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract ZIP
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
         run: |
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "cmdline-tools;latest" "cmake;3.10.2.4988404" "ndk;23.2.8568313"
+
+      - name: Download Godot
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          unzip -q Godot_v4.3-stable_linux.x86_64.zip
+          chmod +x Godot_v4.3-stable_linux.x86_64
+
+      - name: Install Android templates
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
+          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
+          unzip -q Godot_v4.3-stable_export_templates.tpz -d templates
+          cp templates/templates/* ~/.local/share/godot/export_templates/4.3.stable/
+
+      - name: Extract game ZIP
+        run: |
+          mkdir extracted
           unzip -o Frontline_Online_Godot4_Android_Starter.zip -d extracted
+          echo "PROJECT_DIR=$(dirname "$(find extracted -name project.godot | head -1)")" >> $GITHUB_ENV
 
-      - name: Prepare project
+      - name: Create Android preset
         run: |
-          find extracted -name project.godot
+          cat > "$PROJECT_DIR/export_presets.cfg" <<'EOF'
+          [preset.0]
+          name="Android"
+          platform="Android"
+          runnable=true
+          dedicated_server=false
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          export_path="build/Frontline.apk"
 
-      - name: Build info
-        run: echo "Project extracted successfully"
+          [preset.0.options]
+          custom_template/debug=""
+          custom_template/release=""
+          architectures/armeabi-v7a=false
+          architectures/arm64-v8a=true
+          package/unique_name="com.frontline.online"
+          package/name="Frontline Online"
+          EOF
+
+      - name: Create debug key
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -v \
+            -keystore ~/.android/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000
+
+      - name: Import project
+        run: |
+          ./Godot_v4.3-stable_linux.x86_64 --headless --editor --path "$PROJECT_DIR" --quit
+
+      - name: Build APK
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /home/runner/.android/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+        run: |
+          mkdir -p "$PROJECT_DIR/build"
+          ./Godot_v4.3-stable_linux.x86_64 --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Frontline.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Frontline-Android-APK
+          path: extracted/**/build/Frontline.apk
