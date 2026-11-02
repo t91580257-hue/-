@@ -1,0 +1,26 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '*.zip'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download project
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP
+        run: |
+          unzip -o Frontline_Online_Godot4_Android_Starter.zip -d extracted
+
+      - name: Prepare project
+        run: |
+          find extracted -name project.godot
+
+      - name: Build info
+        run: echo "Project extracted successfully"
